@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"runtime"
 	"unsafe"
 
 	"github.com/tinygo-org/tinygo/goenv"
@@ -25,6 +26,13 @@ import "C"
 func runCCompiler(command string, flags ...string) error {
 	switch command {
 	case "clang":
+		if runtime.GOOS == "windows" {
+			// The Windows builds of LLVM used in TinyGo do not currently
+			// support concurrency. Therefore, we'll have to serialize this
+			// Clang invocation.
+			buildLock.Lock()
+			defer buildLock.Unlock()
+		}
 		// Compile this with the internal Clang compiler.
 		flags = append(flags, "-I"+getClangHeaderPath(goenv.Get("TINYGOROOT")))
 		flags = append([]string{"tinygo:" + command}, flags...)

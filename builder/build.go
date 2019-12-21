@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tinygo-org/tinygo/compileopts"
 	"github.com/tinygo-org/tinygo/compiler"
@@ -18,9 +19,14 @@ import (
 	"github.com/tinygo-org/tinygo/interp"
 )
 
+// Due to some problems with embedded Clang and LLD, we cannot run those in
+// parallel, or in parallel with Go compiles. Therefore, we put a lock around
+// builds and run everything else in parallel.
+var buildLock sync.RWMutex
+
 // Build performs a single package to executable Go build. It takes in a package
 // name, an output path, and set of compile options and from that it manages the
-// whole compilation process.
+// whole compilation process. It is safe to be called concurrently.
 //
 // The error value may be of type *MultiError. Callers will likely want to check
 // for this case and print such errors individually.
@@ -29,6 +35,16 @@ func Build(pkgName, outpath string, config *compileopts.Config, action func(stri
 	if err != nil {
 		return err
 	}
+
+	// Builds can run in parallel, but cannot run in parallel with the built-in
+	// linker. Therefore, use a RWLock to protect against such concurrency.
+	buildLock.RLock()
+	buildLockAcquired := true
+	defer func() {
+		if buildLockAcquired {
+			buildLock.RUnlock()
+		}
+	}()
 
 	// Compile Go code to IR.
 	errs := c.Compile(pkgName)
@@ -130,6 +146,12 @@ func Build(pkgName, outpath string, config *compileopts.Config, action func(stri
 		if err != nil {
 			return err
 		}
+
+		// All compilation has been done. We'll soon invoke the linker. The
+		// linker uses the same lock but as a write lock (to avoid compiling and
+		// linking at the same time), so we'll have to release this lock.
+		buildLock.RUnlock()
+		buildLockAcquired = false
 
 		// Load builtins library from the cache, possibly compiling it on the
 		// fly.

@@ -27,6 +27,10 @@ import "C"
 func link(linker string, flags ...string) error {
 	switch linker {
 	case "ld.lld":
+		// Do not run multiple instances of lld at the same time.
+		buildLock.Lock()
+		defer buildLock.Unlock()
+
 		flags = append([]string{"tinygo:" + linker}, flags...)
 		var cflag *C.char
 		buf := C.calloc(C.size_t(len(flags)), C.size_t(unsafe.Sizeof(cflag)))
@@ -41,7 +45,12 @@ func link(linker string, flags ...string) error {
 			return errors.New("failed to link using built-in ld.lld")
 		}
 		return nil
+
 	case "wasm-ld":
+		// Do not run multiple instances of lld at the same time.
+		buildLock.Lock()
+		defer buildLock.Unlock()
+
 		flags = append([]string{"tinygo:" + linker}, flags...)
 		var cflag *C.char
 		buf := C.calloc(C.size_t(len(flags)), C.size_t(unsafe.Sizeof(cflag)))
@@ -57,6 +66,7 @@ func link(linker string, flags ...string) error {
 			return errors.New("failed to link using built-in wasm-ld")
 		}
 		return nil
+
 	default:
 		// Fall back to external command.
 		if cmdNames, ok := commands[linker]; ok {
